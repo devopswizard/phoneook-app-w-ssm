@@ -93,8 +93,103 @@ Resources:
                 echo "${MyDBURI}" > /home/ec2-user/dbserver.endpoint
                 cd /home/ec2-user
                 TOKEN=$(aws --region=us-east-1 ssm get-parameter --name /temelkarabacak/phonebook/token --with-decryption --query 'Parameter.Value' --output text)
-                git clone https://$TOKEN@github.com/awsdevopsteam/phonebook-web-app.git
-
+                git clone https://$TOKEN@github.com/devopswizard/phoneook-app-w-ssm.git
+                python3 /home/ec2-user/phoneook-app-w-ssm/phonebook-app.py
               - MyDBURI: !GetAtt DBInstance.Endpoint.Address
-  
+
+  TG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref MyVPC
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: 0
+      DBInstanceClass: db.t3.micro
+      DBInstanceIdentifier: phone-book
+      DBName: clarusway_phonebook
+      DBSecurityGroups: 
+        - !Ref DBSecurityGroup
+      Engine: MySQL
+      EngineVersion: 8.0.35
+      MasterUserPassword: '{{resolve:ssm-secure:/temelkarabacak/phonebook/password:1}}'
+      MasterUsername: !Ref MyDbusername
+      Port: 3306
+      PubliclyAccessible: true
+
+  DBSecurityGroup:
+    Type: AWS::RDS::DBSecurityGroup
+    Properties:
+      DBSecurityGroupIngress:
+        - EC2SecurityGroupId: !GetAtt WebServerSecurityGroup.GroupId
+      GroupDescription: only allows from ec2 sec grp
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP and SSH for flask webserver
+      GroupName: phone-book-group
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref MyVPC
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP for Application Load Balancer
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref MyVPC
+
+  MyInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: SSMInstanceProfile
+      Roles:
+        - !Ref MySSMRole
+
+  MySSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonSSMFullAccess
+
 Outputs:
+  WebsiteURL:
+    Description: Phonebook Application Load Balancer URL
+    Value: !Sub
+      - http://${ALBAdress}
+      - ALBAdress: !GetAtt ALB.DNSName
